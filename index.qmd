@@ -1,0 +1,221 @@
+---
+title: '<img src="imgs/logo.png" width="120"> Relatório de Inflação — IPCA'
+author: "Fernando da Silva"
+date: "2023/09/15"
+lang: pt
+format: 
+  html:
+    page-layout: full
+    fig-width: 4.5
+    fig-height: 3
+    fig-dpi: 600
+execute:
+  echo: false
+  warning: false
+  message: false
+---
+
+```{python coleta_e_tratamento}
+# Carregar as bibliotecas
+import sidrapy as sidra
+import pandas as pd
+
+# IPCA - cheio (Var. % mensal e acum. 12m)
+dados_brutos_ipca_cheio = sidra.get_table(
+    table_code = "1737", 
+    territorial_level = "1", 
+    ibge_territorial_code = "all", 
+    variable = "63,2265", 
+    period = "all"
+    )
+
+# IPCA - Grupos (Var. % mensal)
+dados_brutos_ipca_grupos = sidra.get_table(
+    table_code = "7060", 
+    territorial_level = "1", 
+    ibge_territorial_code = "all", 
+    variable = "63", 
+    period = "all",
+    classifications = {
+        "315": "7170,7445,7486,7558,7625,7660,7712,7766,7786"
+        }
+    )
+
+# IPCA - cheio (Var. % mensal e acum. 12m)
+dados_ipca_cheio = (
+    dados_brutos_ipca_cheio
+    .rename(columns = dados_brutos_ipca_cheio.iloc[0])
+    .rename(
+        columns = {
+            "Mês (Código)": "data",
+            "Variável": "variavel",
+            "Valor": "valor"
+            }
+        )
+    .filter(items = ["data", "variavel", "valor"], axis = "columns")
+    .query("valor not in ['Valor', '...']")
+    .replace(
+        to_replace = {
+            "variavel": {
+                "IPCA - Variação mensal": "Var. % mensal",
+                "IPCA - Variação acumulada em 12 meses": "Var. % acum. 12m"
+            }
+        }
+    )
+    .assign(
+        data = lambda x: pd.to_datetime(x.data, format = "%Y%m"),
+        valor = lambda x: x.valor.astype(float)
+        )
+)
+
+# IPCA - Grupos (Var. % mensal)
+dados_ipca_grupos = (
+    dados_brutos_ipca_grupos
+    .rename(columns = dados_brutos_ipca_grupos.iloc[0])
+    .rename(
+        columns = {
+            "Mês (Código)": "data",
+            "Variável": "variavel",
+            "Valor": "valor",
+            "Geral, grupo, subgrupo, item e subitem": "grupo"
+            }
+        )
+    .filter(items = ["data", "variavel", "grupo", "valor"], axis = "columns")
+    .query("valor not in ['Valor', '...']")
+    .replace(
+        to_replace = {
+            "variavel": {"IPCA - Variação mensal": "Var. % mensal"},
+            "grupo": {r"^(\d{1})(\.)": ""}
+        },
+        regex = True
+    )
+    .assign(
+        data = lambda x: pd.to_datetime(x.data, format = "%Y%m"),
+        valor = lambda x: x.valor.astype(float)
+        )
+)
+
+# Salvar arquivos como CSV
+dados_ipca_cheio.to_csv(path_or_buf = "dados/ipca_cheio.csv", index = False)
+dados_ipca_grupos.to_csv(path_or_buf = "dados/ipca_grupos.csv", index = False)
+
+```
+
+```{r biblioteca_e_dados}
+# Carregar bibliotecas
+library(readr)
+library(magrittr)
+library(dplyr)
+library(ggplot2)
+library(forcats)
+library(scales)
+
+
+# Carregar dados
+dados_ipca_cheio <- readr::read_csv("dados/ipca_cheio.csv")
+dados_ipca_grupos <- readr::read_csv("dados/ipca_grupos.csv")
+
+
+```
+
+```{r visualizacoes_graficas}
+
+# Gerar gráfico de linha: IPCA cheio
+g1 <- dados_ipca_cheio %>% 
+  dplyr::group_by(variavel) %>% 
+  dplyr::arrange(data) %>% 
+  dplyr::slice_tail(n = 36) %>% 
+  dplyr::ungroup() %>% 
+  ggplot2::ggplot() +
+  ggplot2::aes(x = data, y = valor, color = variavel) +
+  ggplot2::geom_line(size = 1) +
+  ggplot2::labs(
+    title = "Inflação cheio: IPCA",
+    y = "%",
+    x = NULL,
+    color = NULL,
+    caption = "Dados: IBGE | Elaboração: analisemacro.com.br"
+    ) +
+  ggplot2::theme_light() +
+  ggplot2::theme(legend.position = "top")
+
+# Gerar gráfico de coluna: IPCA grupos
+g2 <- dados_ipca_grupos %>% 
+  dplyr::filter(data == max(data)) %>% 
+  dplyr::arrange(valor) %>% 
+  dplyr::mutate(grupo = forcats::as_factor(grupo)) %>% 
+  ggplot2::ggplot() +
+  ggplot2::aes(y = grupo, x = valor, fill = valor > 0) +
+  ggplot2::geom_col(show.legend = FALSE) +
+  ggplot2::scale_fill_manual(values = c("darkred", "darkblue")) +
+  ggplot2::scale_x_continuous(
+    labels = scales::label_number(big.mark = ".", decimal.mark = ",")
+    ) +
+  ggplot2::labs(
+    title = "Grupos do IPCA",
+    y = NULL,
+    x = "Var. % mensal",
+    caption = "Dados: IBGE | Elaboração: analisemacro.com.br"
+    ) +
+  ggplot2::theme_light()
+```
+
+::: {.grid}
+
+::: {.g-col-7}
+## Inflação cheia
+Parágrafo.
+:::
+
+::: {.g-col-5}
+
+<br><br>
+```{r}
+g1
+```
+
+::: {.callout-note}
+## Conceito
+IPCA é a sigla de Índice Nacional de Preços ao Consumidor Amplo, um índice de preços produzido pelo IBGE. Trata-se de uma medida acumulada do comportamento dos preços de bens e serviços da economia brasileira. A inflação é a taxa de crescimento deste índice.
+:::
+
+:::
+
+:::
+
+::: {.grid}
+
+::: {.g-col-7}
+## Grupos
+Parágrafo.
+:::
+
+::: {.g-col-5}
+
+<br><br>
+```{r}
+g2
+```
+
+:::
+
+:::
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
